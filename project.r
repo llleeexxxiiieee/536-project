@@ -27,7 +27,7 @@ summary_dat[, dateComponents := ymd(dateComponents)]
 
 # HANDWASH ANALYSIS ------------------------------------------------------------
 
-# subset to mindfulness records
+# subset to handwashing records
 handwash_dat = health_dat[type == "HKCategoryTypeIdentifierHandwashingEvent"]
 
 # only meaningful item is duration
@@ -94,7 +94,6 @@ for (file in route_files) {
               "Lon:", lon))
 }
 
-
 # loop through all the files in the data/routes folder and get the time of the activity
 for (file in route_files) {
   gpx_data <- xmlParse(file)
@@ -103,7 +102,7 @@ for (file in route_files) {
   print(paste("File:", file, "Time:", time))
 }
 
-# READING AND PARSING OUTPUT FILE -----------------------------------------------
+# READING AND PARSING LOCATIONS FILE -----------------------------------------------
 
 # make table with date, city, state, country
 location_data <- data.table(date = character(), city = character(), state = character(), country = character())
@@ -158,20 +157,6 @@ setorder(location_data, date)
 # write to csv
 fwrite(location_data, "location_data.csv")
 
-# get the state for each day and add it to calendar in gradient format 
-library(randomcoloR)
-num_colors <- length(unique(na.omit(location_data$state)))
-calendar_colors <- distinctColorPalette(num_colors)
-state_colors <- setNames(calendar_colors, unique(na.omit(location_data$state)))
-calendR(from = "2025-01-01", # Custom start date
-        to = "2025-12-31",
-        special.days = location_data$state[location_data$date >= as.Date("2025-01-01") & location_data$date <= as.Date("2025-12-31")],
-        gradient = TRUE,
-        special.col = state_colors,
-        legend.pos = "right",     # Position of the legend
-        legend.title = "Legend",
-        title = "State by Day 2025")
-
 # get most common city not including NAs
 most_common_city <- location_data[!is.na(city), .N, by = city][order(-N)][1]
 print(most_common_city)
@@ -186,3 +171,44 @@ calendR(from = "2025-01-01", # Custom start date
         legend.pos = "right",     # Position of the legend
         legend.title = "Legend",
         title = "Location by Day 2025")
+
+# HEARTRATE ANALYSIS ------------------------------------------------------------
+
+# subset to heart rate records
+heartrate_dat = health_dat[type == "HKQuantityTypeIdentifierHeartRate"]
+heartrate_dat[, value := as.numeric(value)]
+heartrate_dat[, date := as.Date(startDate, tz = "America/Chicago")]
+print(heartrate_dat)
+
+# calculate average heart rate per day
+heartrate_daily = heartrate_dat[, .(avgHeartRate = mean(value, na.rm = TRUE)), by = date]
+print(heartrate_daily)
+
+# find the high and low heart rate per day
+heartrate_daily_extremes = heartrate_dat[, .(maxHeartRate = max(value, na.rm = TRUE),
+                                            minHeartRate = min(value, na.rm = TRUE)), by = date]
+print(heartrate_daily_extremes)
+
+# find first and last heart rate time per seperate day
+heartrate_daily_times = heartrate_dat[, .(firstTime = min(startDate),
+                                          lastTime = max(startDate)), by = date] 
+print(heartrate_daily_times)
+
+# print all heart rate data for 2025-01-01
+print(heartrate_dat[as.Date(startDate) == as.Date("2025-01-01")])
+
+
+# plot average heart rate over 2025 
+ggplot(heartrate_daily[date >= as.Date("2025-01-01") & date <= as.Date("2025-12-31")], aes(x = date, y = avgHeartRate)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Average Daily Heart Rate Over Time (2025)",
+       x = "Date",
+       y = "Average Heart Rate (bpm)") +
+  theme_minimal()
+
+# for 2025-01-01 get all the data from workout_dat and print to console
+date_to_check <- as.Date("2025-09-21")
+print(workout_dat[as.Date(startDate) == date_to_check])
+
+print(workout_dat)
