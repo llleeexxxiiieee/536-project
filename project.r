@@ -5,6 +5,7 @@ library(ggplot2)
 library(stringr)
 library(leaflet)
 library(calendR)
+library(stringr)
 
 # IMPORT AND CLEAN DATA --------------------------------------------------------
 
@@ -24,6 +25,7 @@ workout_dat[, endDate := ymd_hms(endDate, tz = "America/Chicago")]
 # split summaries & clean times
 summary_dat = as.data.table(XML:::xmlAttrsToDataFrame(xml_dat["//ActivitySummary"]))
 summary_dat[, dateComponents := ymd(dateComponents)]
+print(summary_dat)
 
 # HANDWASH ANALYSIS ------------------------------------------------------------
 
@@ -65,42 +67,6 @@ calendR(from = "2025-01-01", # Custom start date
         legend.pos = "right",     # Position of the legend
         legend.title = "Legend",
         title = "Handwashing Events 2025")
-
-# loop through all the files in the data/routes folder and get the first latitude and longitude listed and lookup the geolocation
-library(XML)
-
-route_files <- list.files("data/routes", pattern = "*.gpx", full.names = TRUE)
-
-for (file in route_files) {
-
-  gpx_data <- xmlParse(file)
-
-  # extract first trkpt
-  first_pt <- xpathSApply(
-    gpx_data,
-    "/gpx/trk/trkseg/trkpt[1]",
-    function(x) c(
-      lat = xmlGetAttr(x, "lat"),
-      lon = xmlGetAttr(x, "lon")
-    )
-  )
-
-  # xpathSApply returns a matrix (1 column)
-  lat <- as.numeric(first_pt["lat"])
-  lon <- as.numeric(first_pt["lon"])
-
-  print(paste("File:", basename(file),
-              "Lat:", lat,
-              "Lon:", lon))
-}
-
-# loop through all the files in the data/routes folder and get the time of the activity
-for (file in route_files) {
-  gpx_data <- xmlParse(file)
-  time <- xpathSApply(gpx_data, "///time", xmlValue)
-
-  print(paste("File:", file, "Time:", time))
-}
 
 # READING AND PARSING LOCATIONS FILE -----------------------------------------------
 
@@ -184,9 +150,11 @@ print(heartrate_dat)
 heartrate_daily = heartrate_dat[, .(avgHeartRate = mean(value, na.rm = TRUE)), by = date]
 print(heartrate_daily)
 
-# find the high and low heart rate per day
+# find the high and low heart rate per day with time stamps
 heartrate_daily_extremes = heartrate_dat[, .(maxHeartRate = max(value, na.rm = TRUE),
-                                            minHeartRate = min(value, na.rm = TRUE)), by = date]
+                                            maxTime = startDate[which.max(value)],
+                                            minHeartRate = min(value, na.rm = TRUE),
+                                            minTime = startDate[which.min(value)]), by = date]
 print(heartrate_daily_extremes)
 
 # find first and last heart rate time per seperate day
@@ -207,8 +175,186 @@ ggplot(heartrate_daily[date >= as.Date("2025-01-01") & date <= as.Date("2025-12-
        y = "Average Heart Rate (bpm)") +
   theme_minimal()
 
-# for 2025-01-01 get all the data from workout_dat and print to console
-date_to_check <- as.Date("2025-09-21")
-print(workout_dat[as.Date(startDate) == date_to_check])
+# DAILY LOG FORMATTING ------------------------------------------
 
-print(workout_dat)
+#select 20 random dates from health_dat
+set.seed(123) # for reproducibility
+random_dates <- sample(unique(as.Date(health_dat$startDate, tz = "America/Chicago")), 20)
+print(random_dates)
+
+# for 2025-01-01 get all the data from workout_dat and print to console
+date_to_check <- as.Date("2023-01-09", tz = "America/Chicago")
+day_activity <- workout_dat[as.Date(startDate, tz = "America/Chicago") == date_to_check]
+print(day_activity)
+
+day_heartrate_extremes <- heartrate_daily_extremes[date == date_to_check]
+day_heartrate <- heartrate_daily_times[date == date_to_check]
+# print(paste("On", date_to_check, "the person put their Apple watch on at", day_heartrate$firstTime, "and took it off at", day_heartrate$lastTime))
+day_location <- location_data[date == date_to_check][1]
+# print(paste("On", date_to_check, "at", day_activity$startDate, "the person did a", str_match(day_activity$workoutActivityType, "HKWorkoutActivityType(.*)")[,2], "workout that lasted", difftime(day_activity$endDate, day_activity$startDate, units = "mins"), "minutes."))
+
+# put events from above into a data table and sort events by time
+day_log <- data.table(
+  time = c(day_heartrate$firstTime, day_activity$startDate, day_activity$endDate, day_heartrate$lastTime, day_heartrate_extremes$maxTime, day_heartrate_extremes$minTime),
+  event = c("Put on Apple Watch", 
+            paste("Started", str_match(day_activity$workoutActivityType, "HKWorkoutActivityType(.*)")[,2], "workout"), 
+            paste("Ended", str_match(day_activity$workoutActivityType, "HKWorkoutActivityType(.*)")[,2], "workout"), 
+            "Took off Apple Watch",
+            paste("Max Heart Rate:", day_heartrate_extremes$maxHeartRate),
+            paste("Min Heart Rate:", day_heartrate_extremes$minHeartRate))
+)
+setorder(day_log, time) 
+
+print(paste("On", date_to_check, "the person was in", day_location$city, ",", day_location$state, ",", day_location$country))
+print(day_log)
+
+# SIMILARITY ANALYSIS BETWEEN DAYS ------------------------------------------------
+
+# for each day check if city is the same as the most common city of the previous two weeks
+
+# loop through each day in 2025
+dates_2025 <- seq(as.Date("2025-01-01"), as.Date("2025-12-31"), by = "day")
+# print(dates_2025)
+for (i in 15:length(dates_2025)) {
+  current_date <- dates_2025[i]
+  # print(current_date)
+  # get the most common city in the previous two weeks
+  start_date <- dates_2025[i - 7]
+  end_date <- dates_2025[i - 1]
+  previous_two_weeks <- location_data[date >= start_date & date <= end_date]
+  # print(start_date)
+  # print(end_date)
+  # print(previous_two_weeks)
+  most_common_city_prev <- previous_two_weeks[!is.na(city), .N, by = city][order(-N)][1]
+  # print(most_common_city_prev)
+  
+  # get the city for the current day
+  current_day_city <- location_data[date == current_date]$city
+  
+  # compare and print result
+  if (!is.na(current_day_city) && !is.na(most_common_city_prev$city) && current_day_city == most_common_city_prev$city) {
+    print(paste("On", current_date, "the person was in their most common city:", current_day_city))
+  } else {
+    print(paste("On", current_date, "the person was NOT in", most_common_city_prev$city, ", they were in", current_day_city))
+  }
+}
+
+# create a daily summary data table with dates for 2025 added
+daily_summary <- data.table()
+
+# for every day of 2025, get the location, the number of workouts, the types of workouts, the duration of workouts, the average heart rate, the first heart rate time, and the last heart rate time and add to a data table with 0 or NA for missing values
+daily_summary <- data.table()
+
+for (current_date in seq(as.Date("2025-01-01"), as.Date("2025-12-31"), by = "day")) {
+
+  ## --- Location ---
+  location <- location_data[date == current_date]
+  city_val <- if (nrow(location) > 0) location$city else NA_character_
+
+  ## --- Workouts ---
+  workouts <- workout_dat[as.Date(startDate, tz = "America/Chicago") == current_date]
+  num_workouts <- nrow(workouts)
+
+  workout_types <- if (num_workouts > 0) {
+    paste(str_match(workouts$workoutActivityType, "HKWorkoutActivityType(.*)")[,2], collapse = ", ")
+  } else {
+    NA_character_
+  }
+
+  total_duration <- if (num_workouts > 0) {
+    as.numeric(sum(difftime(workouts$endDate, workouts$startDate, units = "mins")))
+  } else {
+    0
+  }
+
+  ## --- Heart rate ---
+  hr_row <- heartrate_daily[date == current_date]
+
+  avg_hr <- if (nrow(hr_row) > 0) hr_row$avgHeartRate else NA_real_
+
+  # Fix empty indexing: if no row, set NA
+  first_heartrate_time <- heartrate_daily_times[date == current_date]$firstTime
+  first_heartrate_time <- if (length(first_heartrate_time) == 0) NA else first_heartrate_time
+
+  last_heartrate_time <- heartrate_daily_times[date == current_date]$lastTime
+  last_heartrate_time <- if (length(last_heartrate_time) == 0) NA else last_heartrate_time
+
+  ## --- Build daily row ---
+  today_summary <- data.table(
+    date = as.Date(current_date),
+    city = city_val,
+    num_workouts = num_workouts,
+    workout_types = workout_types,
+    total_duration = total_duration,
+    avg_heart_rate = avg_hr,
+    first_heartrate_time = first_heartrate_time,
+    last_heartrate_time = last_heartrate_time
+  )
+
+  daily_summary <- rbind(daily_summary, today_summary, fill = TRUE)
+}
+
+print(daily_summary)
+
+# for every day in daily_summary, add a similarity score value
+daily_summary[, similarity_score := 0]
+for (i in 8:nrow(daily_summary)) {
+  current_city <- daily_summary[i]$city
+  previous_two_weeks <- daily_summary[(i-7):(i-1)]
+  most_common_city_prev <- previous_two_weeks[!is.na(city), .N, by = city][order(-N)][1]
+  
+  if (!is.na(current_city) && !is.na(most_common_city_prev$city) && current_city == most_common_city_prev$city) {
+    daily_summary[i, similarity_score := 1]
+  } else {
+    daily_summary[i, similarity_score := 0]
+  }
+
+  # if num workouts is the same as the average number of workouts in the previous two weeks, add 1 to similarity score
+  avg_num_workouts_prev <- mean(previous_two_weeks$num_workouts, na.rm = TRUE)
+  if (daily_summary[i]$num_workouts == round(avg_num_workouts_prev)) {
+    daily_summary[i, similarity_score := similarity_score + 1]
+  }
+
+  # if the total duration is within 20% of the average total duration in the previous two weeks, add 1 to similarity score
+  avg_total_duration_prev <- mean(previous_two_weeks$total_duration, na.rm = TRUE)  
+  if (abs(daily_summary[i]$total_duration - avg_total_duration_prev) <= 0.2 * avg_total_duration_prev) {
+    daily_summary[i, similarity_score := similarity_score + 1]
+  }
+
+  # if the average heart rate is within 10 bpm of the average heart rate in the previous two weeks, add 1 to similarity score
+  avg_heart_rate_prev <- mean(previous_two_weeks$avg_heart_rate, na.rm = TRUE)  
+  if (abs(daily_summary[i]$avg_heart_rate - avg_heart_rate_prev) <= 10) {
+    daily_summary[i, similarity_score := similarity_score + 1]
+  }
+
+  # if the first heart rate time is within 1 hour of the average first heart rate time in the previous two weeks, add 1 to similarity score
+  avg_first_heartrate_time_prev <- mean(as.numeric(previous_two_weeks$first_heartrate_time), na.rm = TRUE)  
+  if (abs(as.numeric(daily_summary[i]$first_heartrate_time) - avg_first_heartrate_time_prev) <= 3600) {
+    daily_summary[i, similarity_score := similarity_score + 1]
+  } 
+
+  # if the last heart rate time is within 1 hour of the average last heart rate time in the previous two weeks, add 1 to similarity score
+  avg_last_heartrate_time_prev <- mean(as.numeric(previous_two_weeks$last_heartrate_time), na.rm = TRUE)  
+  if (abs(as.numeric(daily_summary[i]$last_heartrate_time) - avg_last_heartrate_time_prev) <= 3600) {
+    daily_summary[i, similarity_score := similarity_score + 1]
+  }
+
+}
+
+print(daily_summary)
+
+# using daily_summary, plot a calendar where the color is based on similarity score for 2025
+calendR(from = "2025-01-01", # Custom start date
+        to = "2025-12-31",
+        special.days = daily_summary$similarity_score[daily_summary$date >= as.Date("2025-01-01") & daily_summary$date <= as.Date("2025-12-31")],
+        gradient = TRUE,
+        special.col = "white",
+        low.col = "red",
+        legend.pos = "right",     # Position of the legend
+        legend.title = "Similarity Score",
+        title = "Daily Similarity Score 2025")
+
+length(daily_summary$similarity_score[daily_summary$date >= as.Date("2025-08-01") & daily_summary$date <= as.Date("2025-08-31")])
+
+print(location_data[location_data$date >= as.Date("2025-08-01") & location_data$date <= as.Date("2025-08-31")])
+print(daily_summary[daily_summary$date >= as.Date("2025-08-01") & daily_summary$date <= as.Date("2025-08-31")])
